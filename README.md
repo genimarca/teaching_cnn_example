@@ -6,6 +6,9 @@ TensorFlow for sentiment analysis.
 The download or running of the code of this example is not recommended, because
 the development did not follow any development good practice recommendations.
 
+Due to the teaching and non-professional nature of the repository, the documentation
+is in Spanish.
+
 ## Disclaimer
 
 The authors of this code are not responsible of the damages that can produce the
