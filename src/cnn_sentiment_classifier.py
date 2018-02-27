@@ -126,22 +126,40 @@ def nn_graph():
         accuracy = tf.reduce_mean(correct_predictions, name="accuracy")
 
 
-def get_features(batch_sentences, vocabulary):
+def get_features(training_sentences, vocabulary):
     """Get the features of the batch_sentences.
     
     Args:
         batch_sentences: Lista de lista de oraciones y palabras.
-        vocabulary: Diccionario con las palabras de entrenameinto y su identificador o índice. 
+        vocabulary: Diccionario con las palabras de entrenameinto y su identificador o índice.
+    Returns:
+        Lista de listas de enteros
+     
     """
-    batch_sentences_features = []
+    sentences_features = []
     own_lower = str.lower
-    for sent in batch_sentences:
+    for sent in training_sentences:
         sentence_features = [vocabulary.get(own_lower(word), OOV_INDEX) for word in sent]
-        batch_sentences_features.append(sentence_features)
-    return batch_sentences_features
+        sentences_features.append(sentence_features)
+    return sentences_features
 
 
-def padding_truncate():
+def padding_truncate(training_sentences):
+    """Amplia o recorta las oraciones de entrenamiento.
+    
+    Args:
+        training_sentences: Lista de listas de enteros.
+    """
+    
+    for i in range(len(training_sentences)):
+        sent_size = len(training_sentences[i])
+        if sent_size > MAX_LENGTH:
+            training_sentences[i] = training_sentences[i][:MAX_LENGTH]
+        elif sent_size < MAX_LENGTH:
+            training_sentences[i] += [0] * (MAX_LENGTH - sent_size)
+    
+    return training_sentences 
+            
 
 def model_training(training_sents, training_labels, vocabulary):
     """Entrenamiento del modelo.
@@ -150,28 +168,30 @@ def model_training(training_sents, training_labels, vocabulary):
         training_corpus: lista de lista de oraciones
         training_labels:  lista de enteros que se corresponden con las etiquetas
     """
+    #Preparación de la entrada: cálculo de características
+    training_sents_features = get_features(training_sents, vocabulary)
+    #Preparación de la entrada: Ampliación (padding) o truncado (truncate)
+    training_sents_features = padding_truncate(training_sents_features)
     
     nn_model = tf.Session()
     
     #Es muy importante este paso, dado que inicializa todas las variables
     nn_model.run(tf.initialize_all_variables())
     
-    number_of_batches = int(len(training_sents)/SIZE_BATCHES)
+    number_of_batches = int(len(training_sents_features)/SIZE_BATCHES)
     
     for epoch in range(EPOCHS):
         for batch in range(number_of_batches):
              start_index = batch * SIZE_BATCHES
              end_index = (batch + 1) * SIZE_BATCHES
-             batch_sentences = training_sents[start_index:end_index]
+             batch_sentences = training_sents_features[start_index:end_index]
              batch_labels = training_labels[start_index:end_index]
              n_batch_sentences = len(batch_sentences)
              if n_batch_sentences != 0: #Si el tamaño del batch es cero, no se hace nada.
                  #Si el nº. de oracione en el batch es menor que el tamaño del batch, rellenamos con las del principio del corpus de entrenamiento.
                  if n_batch_sentences < SIZE_BATCHES:
-                     batch_sentences += training_sents[0:(SIZE_BATCHES - n_batch_sentences)]
+                     batch_sentences += training_sents_features[0:(SIZE_BATCHES - n_batch_sentences)]
                      batch_labels += training_labels[0:(SIZE_BATCHES - n_batch_sentences)]
-                 #Preparación de la entrada: cálculo de características
-                 batch_sentences_features = get_features(batch_sentences, vocabulary)
 
 if __name__ == '__main__':
     
