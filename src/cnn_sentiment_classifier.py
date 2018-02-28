@@ -222,7 +222,35 @@ def model_training(training_sents, training_labels, vocabulary,
         print(str_to_print)
     return nn_model
                  
-                
+def model_evaluation(nn_model, test_sentences, test_labels, vocabulary, 
+                     x_sentences_placeholder, y_labels_placeholder):
+    """Evalúa el modelo
+    
+    Args:
+        nn_model: el modelo correspondiente a la NN.
+        test_sentences: Lista de listas con las oraciones del test
+        test_labels: lista con las clases de los ejemplos de test
+        x_sentences_placeholder: Entrada de la NN correspondiente a las oraciones
+        y_labels_placeholders: Entrada de la NN correspondiente a las etiquetas
+    """
+    
+    #Preparación de la entrada: cálculo de características
+    test_sents_features = get_features(test_sentences, vocabulary)
+    #Preparación de la entrada: Ampliación (padding) o truncado (truncate)
+    test_sents_features = padding_truncate(test_sents_features)
+    
+    #Definición de las operaciones que hay que ejecutar en el test. En este
+    #caso no se ejecuta el "training_step" porque no queremos entrenar.
+    test_fetches = {"accuracy":"accuracy",
+                    "f_loss":"f_loss"}
+    
+    dict_fed = {x_sentences_placeholder:test_sents_features,
+                 y_labels_placeholder:test_labels}
+    test_fetches_values = nn_model.run(test_fetches, feed_dict=dict_fed)
+    
+    str_to_print = "Accuracy: {} Loss: {}".forman(test_fetches_values["accuracy"], test_fetches_values["f_loss"])
+    print(str_to_print)
+    
                 
 
 if __name__ == '__main__':
@@ -249,7 +277,14 @@ if __name__ == '__main__':
     nn_model = model_training(train_sents, train_labels, train_vocabulary, 
                               x_sentences_placeholder, y_labels_placeholder)
     
-    #6,- Evaluación
+    print("-- Fin Entrenamiento --")
+    #6.- Evaluación
+    print("-- Evaluación --")
+    model_evaluation(nn_model, test_sents, test_labels, train_vocabulary, 
+                     x_sentences_placeholder, y_labels_placeholder)
+    
+    print("-- Fin Evaluación --")
+    
     
     
     
