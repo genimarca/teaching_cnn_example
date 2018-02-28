@@ -25,7 +25,7 @@ EMBEDDINGS_DIMENSIONS = 300
 KERNEL_SIZE = 2
 CNN_OUTPUT_FEATURES = 100
 EPOCHS = 10
-SIZE_BATCHES = 50
+SIZE_BATCHES = 64
 OOV_INDEX = 0
 
 
@@ -90,7 +90,7 @@ def nn_graph(vocabulary_size):
     """
     
     x_sentences_placeholder = tf.placeholder(tf.int32, shape=[None, MAX_LENGTH], name="x_sentences_placeholder")
-    y_labels_placeholder = tf.placeholder(tf.float32, shape=[None, 1], name="y_labels_placeholder")
+    y_labels_placeholder = tf.placeholder(tf.int32, shape=[None], name="y_labels_placeholder")
     
     #Capa de embeddings. Aquí generamos los embeddgins de manera aleatoria. En el trabajo 
     #se utilizarán unos embeddings pre-entrenados.
@@ -105,38 +105,45 @@ def nn_graph(vocabulary_size):
         v_bias = tf.get_variable("bias", shape=[CNN_OUTPUT_FEATURES], dtype=tf.float32, initializer=tf.constant_initializer(0.1))
         pre_activation = tf.nn.bias_add(x_sentences_conv, v_bias)
         x_sentences_conv_activation = tf.nn.tanh(pre_activation, name="cnn_activation")
+        print(x_sentences_conv_activation.get_shape())
+        x_sentences_conv_activation = tf.expand_dims(x_sentences_conv_activation,axis=1)
+        print(x_sentences_conv_activation.get_shape())
+        x_sentences_conv_activation=tf.nn.max_pool(x_sentences_conv_activation,ksize=[1,1,2,1],strides=[1,1,2,1], padding="VALID", name="cnn_pooling")
+        print(x_sentences_conv_activation.get_shape())
+        x_sentences_conv_activation=tf.squeeze(x_sentences_conv_activation,axis=[1])
+        print(x_sentences_conv_activation.get_shape())
     
+    #Pasar de 3 dimensiones [batch, sentence, CNN_OUTPUT_FEATURES] a [batch, sentence*CNN_OUTPUT_FEATURES]
+    x_sentences_conv_activation_new_shape = [-1, x_sentences_conv_activation.get_shape()[1] * x_sentences_conv_activation.get_shape()[2]]
+    x_sentences_conv_activation = tf.reshape(x_sentences_conv_activation,x_sentences_conv_activation_new_shape, name="reshaping")
     #Full connect layer
     x_sentences_dense_activation = None
     with tf.variable_scope("dense_layer") as scope:
         
-        weights = tf.get_variable("dense_weigths", shape=[x_sentences_conv_activation.get_shape()[2].value, x_sentences_conv_activation.get_shape()[2].value], dtype=tf.float32)
-        weights = tf.expand_dims(weights,0)
-        #weights = tf.tile(weights,tf.shape(x_sentences_conv_activation)[0],0)
-        bias = tf.get_variable("dense_variables", shape=[x_sentences_conv_activation.get_shape()[2].value], dtype=tf.float32, initializer=tf.constant_initializer(0.1))
+        weights = tf.get_variable("dense_weigths", shape=[x_sentences_conv_activation.get_shape()[1].value, x_sentences_conv_activation.get_shape()[1].value], dtype=tf.float32)
+        bias = tf.get_variable("dense_variables", shape=[x_sentences_conv_activation.get_shape()[1].value], dtype=tf.float32, initializer=tf.constant_initializer(0.1))
         x_sentences_dense_activation = tf.tanh(tf.matmul(x_sentences_conv_activation, weights) + bias, name="dense_layer")
         
     #Softmax layer
     y_classified = None
     with tf.variable_scope("softmax_layer") as scope:
         #2 es el número de clases.
-        weights = tf.get_variable("softmax_weights", shape=[x_sentences_dense_activation.get_shape()[2].value,2])
-        weights = tf.expand_dims(weights,0)
+        weights = tf.get_variable("softmax_weights", shape=[x_sentences_dense_activation.get_shape()[1].value,2])
         bias = tf.get_variable("softmas_bias", shape=[2], initializer=tf.constant_initializer(0.1))
         y_logits = tf.matmul(x_sentences_dense_activation, weights) + bias
-        y_classified = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=x_sentences_placeholder, logits=y_logits, name="softmax")
+        y_classified = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y_labels_placeholder, logits=y_logits, name="softmax")
         
     #Loss function
-    f_loss = tf.reduce_mean(y_classified, name="loss_calculation")
+    f_loss = tf.reduce_mean(y_classified, name="f_loss")
     train_step = tf.train.AdadeltaOptimizer().minimize(f_loss, name="nn_train_step")
-    
+
     accuracy = None
     with tf.variable_scope("accuracy"):
-        prediction_labels = tf.argmax(y_classified, 1, name="prediction_labels")
-        correct_predictions = tf.equal(prediction_labels, x_sentences_placeholder, name="correct_predicionts")
-        accuracy = tf.reduce_mean(correct_predictions, name="accuracy")
+        prediction_labels = tf.argmax(y_logits, 1, name="prediction_labels")
+        correct_predictions = tf.equal(prediction_labels, tf.to_int64(y_labels_placeholder), name="correct_predicionts")
+        accuracy = tf.reduce_mean(tf.cast(correct_predictions, tf.float32), name="accuracy")
         
-    return x_sentences, y_labels
+    return x_sentences_placeholder, y_labels_placeholder
 
 
 def get_features(training_sentences, vocabulary):
@@ -201,8 +208,8 @@ def model_training(training_sents, training_labels, vocabulary,
     #Esto son los nombres de los nodos que queremos ejecutar del grafo de la NN.
     #Mirar ref. de session.run(): https://www.tensorflow.org/api_docs/python/tf/Session#run
     nn_fetches = {"nn_train_step":"nn_train_step",
-                  "accuracy":"accuracy",
-                  "f_loss":"f_loss"}
+                  "accuracy":"accuracy/accuracy:0",
+                  "f_loss":"f_loss:0"}
     
     for epoch in range(EPOCHS):
         accuracy_batch_values = []
@@ -225,8 +232,8 @@ def model_training(training_sents, training_labels, vocabulary,
                  str_to_print = "Epoch: {} Batch: {}: Loss: {} Accuracy: {}".format(epoch+1,batch+1,train_fetch_values["f_loss"],train_fetch_values["accuracy"])
                  print(str_to_print)
                  
-                 accuracy_batch_values.append(train_fetch_values["accuracy"])
-                 f_loss_batch_values.append(train_fetch_values["f_loss"])
+                 accuracy_batch_values.append(float(train_fetch_values["accuracy"]))
+                 f_loss_batch_values.append(float(train_fetch_values["f_loss"]))
         str_to_print = "Epoch: {} Mean loss: {} Mean accuracy: {}".format(epoch+1,statistics.mean(f_loss_batch_values),statistics.mean(accuracy_batch_values))
         print(str_to_print)
     return nn_model
@@ -250,14 +257,14 @@ def model_evaluation(nn_model, test_sentences, test_labels, vocabulary,
     
     #Definición de las operaciones que hay que ejecutar en el test. En este
     #caso no se ejecuta el "training_step" porque no queremos entrenar.
-    test_fetches = {"accuracy":"accuracy",
-                    "f_loss":"f_loss"}
+    test_fetches = {"accuracy":"accuracy/accuracy:0",
+                    "f_loss":"f_loss:0"}
     
     dict_fed = {x_sentences_placeholder:test_sents_features,
                  y_labels_placeholder:test_labels}
     test_fetches_values = nn_model.run(test_fetches, feed_dict=dict_fed)
     
-    str_to_print = "Accuracy: {} Loss: {}".forman(test_fetches_values["accuracy"], test_fetches_values["f_loss"])
+    str_to_print = "Accuracy: {} Loss: {}".format(test_fetches_values["accuracy"], test_fetches_values["f_loss"])
     print(str_to_print)
     
                 
@@ -283,7 +290,7 @@ if __name__ == '__main__':
     print("Tamaño voc.: {}\n---".format(len(train_vocabulary)))
     
     #4.- Compilamos el grafo.
-    print("4.- Compilación del grafo de la red neuronal")
+    print("4.- Compilación del grafo de la red neuronal\n---")
     x_sentences_placeholder, y_labels_placeholder = nn_graph(len(train_vocabulary))
     
     #5.- Entrenamiento
