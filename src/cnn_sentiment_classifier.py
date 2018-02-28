@@ -14,9 +14,10 @@ NLTK lo ofrece segmentado en oraciones y tokenizado.
 
 import random
 import statistics
-import nltk.corpus.sentence_polarity as sent_pol
+from nltk.corpus import sentence_polarity as sent_pol
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
+
 #Variables globales
 RANDOM_SEED = 7
 MAX_LENGTH = 65
@@ -40,17 +41,20 @@ def data_preparation_train_test():
         las oraciones de test.
     """
     #Esto lo hago porque a travé de la documentación de NLTK sé como es el corpus.
-    n_pos_sents = len(sent_pol.sents(categories="pos"))
-    n_neg_sents = len(sent_pol.sents(categories="neg"))
+    positive_sents = sent_pol.sents(categories="pos")
+    n_pos_sents = len(positive_sents)
+    negative_sents = sent_pol.sents(categories="neg")
+    n_neg_sents = len(negative_sents)
     #db_indexes: Cada posición se corresponde con una oración del corpus
     db_indexes = [i for i in range(n_pos_sents + n_neg_sents)]
+    db_sents = positive_sents + negative_sents
     #db_labels: Cada posición se corresponde con una etiqueta de opinión del corpus.
     #Cada posición de esta lista se corresponde con cada posición de db_indexes.
     db_labels = [1] * n_pos_sents + [0] * n_neg_sents
     train_indexes, test_indexes, train_labels, test_labels = train_test_split(db_indexes, db_labels,test_size=0.2,shuffle=True, stratify=db_labels)
     
-    train_sents = [db_indexes[i] for i in train_indexes]
-    test_sents = [db_indexes[i] for i in test_indexes]
+    train_sents = [db_sents[i] for i in train_indexes]
+    test_sents = [db_sents[i] for i in test_indexes]
     
     return (train_sents, test_sents, train_labels, test_labels)
     
@@ -78,44 +82,49 @@ def build_vocabulary(input_corpus, index_start):
             
     
 
-def nn_graph():
+def nn_graph(vocabulary_size):
     """Definición del grafo de la red neuronal.
     
     Returns:
         Las dos entradas del grafo (tensorflow placeholders)
     """
     
-    
+    x_sentences_placeholder = tf.placeholder(tf.int32, shape=[None, MAX_LENGTH], name="x_sentences_placeholder")
+    y_labels_placeholder = tf.placeholder(tf.float32, shape=[None, 1], name="y_labels_placeholder")
     
     #Capa de embeddings. Aquí generamos los embeddgins de manera aleatoria. En el trabajo 
     #se utilizarán unos embeddings pre-entrenados.
-    word_embeddings = tf.get_variable("word_embeddings", shape=[MAX_LENGTH, EMBEDDINGS_DIMENSIONS], dtype=tf.float32, trainable=True)
-    x_sentences_embeddings = tf.nn.embedding_lookup(word_embeddings, x_sentences, name="layer_embeddings_lookup")
+    word_embeddings = tf.get_variable("word_embeddings", shape=[vocabulary_size, EMBEDDINGS_DIMENSIONS], dtype=tf.float32, trainable=True)
+    x_sentences_embeddings = tf.nn.embedding_lookup(word_embeddings, x_sentences_placeholder, name="layer_embeddings_lookup")
     
     #CNN
     x_sentences_conv_activation = None
     with tf.variable_scope("cnn_layer") as scope:
         v_kernel = tf.get_variable("kernel", shape=[2,EMBEDDINGS_DIMENSIONS, CNN_OUTPUT_FEATURES], dtype=tf.float32)
         x_sentences_conv = tf.nn.conv1d(x_sentences_embeddings, v_kernel, 1, padding="VALID", name="cnn_operation")
-        v_bias = tf.get_variable("bias",shape=[CNN_OUTPUT_FEATURES], dtype=tf.float32, initializer=tf.constant(0.1))
+        v_bias = tf.get_variable("bias", shape=[CNN_OUTPUT_FEATURES], dtype=tf.float32, initializer=tf.constant_initializer(0.1))
         pre_activation = tf.nn.bias_add(x_sentences_conv, v_bias)
         x_sentences_conv_activation = tf.nn.tanh(pre_activation, name="cnn_activation")
     
     #Full connect layer
     x_sentences_dense_activation = None
     with tf.variable_scope("dense_layer") as scope:
-        weights = tf.get_variable("dense_weigths", shape=[None, x_sentences_conv_activation.get_shape()[2].value, x_sentences_conv_activation.get_shape()[2].value], dtype=tf.float32)
-        bias = tf.get_variable("dense_variables", shape=[x_sentences_conv_activation.get_shape()[2].value], dtype=tf.float32, initializer=tf.constant(0.1))
+        
+        weights = tf.get_variable("dense_weigths", shape=[x_sentences_conv_activation.get_shape()[2].value, x_sentences_conv_activation.get_shape()[2].value], dtype=tf.float32)
+        weights = tf.expand_dims(weights,0)
+        #weights = tf.tile(weights,tf.shape(x_sentences_conv_activation)[0],0)
+        bias = tf.get_variable("dense_variables", shape=[x_sentences_conv_activation.get_shape()[2].value], dtype=tf.float32, initializer=tf.constant_initializer(0.1))
         x_sentences_dense_activation = tf.tanh(tf.matmul(x_sentences_conv_activation, weights) + bias, name="dense_layer")
         
     #Softmax layer
     y_classified = None
     with tf.variable_scope("softmax_layer") as scope:
         #2 es el número de clases.
-        weights = tf.get_variable("softmax_weights", shape=[None,x_sentences_dense_activation.get_shape()[2].value,2])
-        bias = tf.get_variable("softmas_bias", shape=[2], initializer=tf.constant(0.1))
+        weights = tf.get_variable("softmax_weights", shape=[x_sentences_dense_activation.get_shape()[2].value,2])
+        weights = tf.expand_dims(weights,0)
+        bias = tf.get_variable("softmas_bias", shape=[2], initializer=tf.constant_initializer(0.1))
         y_logits = tf.matmul(x_sentences_dense_activation, weights) + bias
-        y_classified = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y_labels, logits=y_logits, name="softmax")
+        y_classified = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=x_sentences_placeholder, logits=y_logits, name="softmax")
         
     #Loss function
     f_loss = tf.reduce_mean(y_classified, name="loss_calculation")
@@ -123,8 +132,8 @@ def nn_graph():
     
     accuracy = None
     with tf.variable_scope("accuracy"):
-        prediction_labels = tf.arg_max(y_classified, 1, name="prediction_labels")
-        correct_predictions = tf.equal(prediction_labels, y_labels, name="correct_predicionts")
+        prediction_labels = tf.argmax(y_classified, 1, name="prediction_labels")
+        correct_predictions = tf.equal(prediction_labels, x_sentences_placeholder, name="correct_predicionts")
         accuracy = tf.reduce_mean(correct_predictions, name="accuracy")
         
     return x_sentences, y_labels
@@ -257,29 +266,34 @@ if __name__ == '__main__':
     
     #Definir semilla aleatoria
     random.seed(RANDOM_SEED)
-    
+    print("1.- Random seed: {}".format(RANDOM_SEED))
     #2.- Leer corpus y partición de entrenamiento y test.
+    print("2.- Preparación partición de datos.")
     train_sents, test_sents, train_labels, test_labels = data_preparation_train_test()
-    
+    print("Total: {}\nEntrenamiento: {}\nTest: {}\n----".format(len(train_sents)+len(test_sents), len(train_sents), len(test_sents)))
     #3.- Creación del vocabulario de entrenamiento. Toda palabra que no esté en
     #el vocabulario de entrenamiento se consdierá palabra fuera de vocabulario (00).
     #Si tratamos de asimilarlo a otro problema de aprendizaje automática, las OOV
     #serían datos perdidos.
     
     #¿Por qué se define el inicio de índice en 2? Por que se suele reservar el
-    #índice 0 para las palabras 00V, y el índice 1 para el padding (extensión de la entrada de la red)..    
+    #índice 0 para las palabras 00V, y el índice 1 para el padding (extensión de la entrada de la red)..
+    print("3.- Construcción del vocabulario (solo entrenamiento)")    
     train_vocabulary = build_vocabulary(train_sents, 2)
+    print("Tamaño voc.: {}\n---".format(len(train_vocabulary)))
     
     #4.- Compilamos el grafo.
-    x_sentences_placeholder, y_labels_placeholder = nn_graph(x_sentences, y_labels)
+    print("4.- Compilación del grafo de la red neuronal")
+    x_sentences_placeholder, y_labels_placeholder = nn_graph(len(train_vocabulary))
     
     #5.- Entrenamiento
+    print("5.- Entrenamiento del modelo")
     nn_model = model_training(train_sents, train_labels, train_vocabulary, 
                               x_sentences_placeholder, y_labels_placeholder)
     
     print("-- Fin Entrenamiento --")
     #6.- Evaluación
-    print("-- Evaluación --")
+    print("6.- Evaluación del modelo")
     model_evaluation(nn_model, test_sents, test_labels, train_vocabulary, 
                      x_sentences_placeholder, y_labels_placeholder)
     
