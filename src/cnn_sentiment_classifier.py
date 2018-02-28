@@ -13,6 +13,7 @@ NLTK lo ofrece segmentado en oraciones y tokenizado.
 '''
 
 import random
+import statistics
 import nltk.corpus.sentence_polarity as sent_pol
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
@@ -79,11 +80,12 @@ def build_vocabulary(input_corpus, index_start):
 
 def nn_graph():
     """Definición del grafo de la red neuronal.
+    
+    Returns:
+        Las dos entradas del grafo (tensorflow placeholders)
     """
     
-    #Entrada
-    x_sentences = tf.placeholder(tf.float32, shape=[None, MAX_LENGTH], name="input_sentence")
-    y_labels = tf.placeholder(tf.float32, shape=[None,1], name="input_label")
+    
     
     #Capa de embeddings. Aquí generamos los embeddgins de manera aleatoria. En el trabajo 
     #se utilizarán unos embeddings pre-entrenados.
@@ -117,13 +119,15 @@ def nn_graph():
         
     #Loss function
     f_loss = tf.reduce_mean(y_classified, name="loss_calculation")
-    train_step = tf.train.AdadeltaOptimizer().minimize(f_loss)
+    train_step = tf.train.AdadeltaOptimizer().minimize(f_loss, name="nn_train_step")
     
     accuracy = None
     with tf.variable_scope("accuracy"):
         prediction_labels = tf.arg_max(y_classified, 1, name="prediction_labels")
         correct_predictions = tf.equal(prediction_labels, y_labels, name="correct_predicionts")
         accuracy = tf.reduce_mean(correct_predictions, name="accuracy")
+        
+    return x_sentences, y_labels
 
 
 def get_features(training_sentences, vocabulary):
@@ -161,12 +165,16 @@ def padding_truncate(training_sentences):
     return training_sentences 
             
 
-def model_training(training_sents, training_labels, vocabulary):
+def model_training(training_sents, training_labels, vocabulary, 
+                   x_sentences_placeholder, y_labels_placeholder):
     """Entrenamiento del modelo.
     
     Args:
         training_corpus: lista de lista de oraciones
         training_labels:  lista de enteros que se corresponden con las etiquetas
+        
+    Returns:
+        El modelo (NN) entrenado.
     """
     #Preparación de la entrada: cálculo de características
     training_sents_features = get_features(training_sents, vocabulary)
@@ -180,8 +188,18 @@ def model_training(training_sents, training_labels, vocabulary):
     
     number_of_batches = int(len(training_sents_features)/SIZE_BATCHES)
     
+    
+    #Esto son los nombres de los nodos que queremos ejecutar del grafo de la NN.
+    #Mirar ref. de session.run(): https://www.tensorflow.org/api_docs/python/tf/Session#run
+    nn_fetches = {"nn_train_step":"nn_train_step",
+                  "accuracy":"accuracy",
+                  "f_loss":"f_loss"}
+    
     for epoch in range(EPOCHS):
+        accuracy_batch_values = []
+        f_loss_batch_values = []
         for batch in range(number_of_batches):
+             
              start_index = batch * SIZE_BATCHES
              end_index = (batch + 1) * SIZE_BATCHES
              batch_sentences = training_sents_features[start_index:end_index]
@@ -192,6 +210,20 @@ def model_training(training_sents, training_labels, vocabulary):
                  if n_batch_sentences < SIZE_BATCHES:
                      batch_sentences += training_sents_features[0:(SIZE_BATCHES - n_batch_sentences)]
                      batch_labels += training_labels[0:(SIZE_BATCHES - n_batch_sentences)]
+                 dict_to_feed = {x_sentences_placeholder:batch_sentences,
+                                 y_labels_placeholder:batch_labels}
+                 train_fetch_values = nn_model.run(nn_fetches, feed_dict=dict_to_feed)
+                 str_to_print = "Epoch: {} Batch: {}: Loss: {} Accuracy: {}".format(epoch+1,batch+1,train_fetch_values["f_loss"],train_fetch_values["accuracy"])
+                 print(str_to_print)
+                 
+                 accuracy_batch_values.append(train_fetch_values["accuracy"])
+                 f_loss_batch_values.append(train_fetch_values["f_loss"])
+        str_to_print = "Epoch: {} Mean loss: {} Mean accuracy: {}".format(epoch+1,statistics.mean(f_loss_batch_values),statistics.mean(accuracy_batch_values))
+        print(str_to_print)
+    return nn_model
+                 
+                
+                
 
 if __name__ == '__main__':
     
@@ -211,10 +243,13 @@ if __name__ == '__main__':
     train_vocabulary = build_vocabulary(train_sents, 2)
     
     #4.- Compilamos el grafo.
-    nn_graph()
+    x_sentences_placeholder, y_labels_placeholder = nn_graph(x_sentences, y_labels)
     
     #5.- Entrenamiento
+    nn_model = model_training(train_sents, train_labels, train_vocabulary, 
+                              x_sentences_placeholder, y_labels_placeholder)
     
+    #6,- Evaluación
     
     
     
